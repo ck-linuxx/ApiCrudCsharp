@@ -1,4 +1,5 @@
 ﻿using ApiCrud.Data;
+using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.EntityFrameworkCore;
 
 namespace ApiCrud.Estudantes
@@ -10,27 +11,59 @@ namespace ApiCrud.Estudantes
             var rotasEstudantes = app.MapGroup(prefix: "estudantes");
 
 
-            rotasEstudantes.MapPost("", handler:async (AddEstudanteRequest request, AppDBContext context) => 
+            rotasEstudantes.MapPost("", handler:async (AddEstudanteRequest request, AppDBContext context, CancellationToken ct) => 
             {
 
-                var estudanteJaExistente = await context.Estudantes.AnyAsync(estudante => estudante.Nome == request.Nome);
+                var estudanteJaExistente = await context.Estudantes.AnyAsync(estudante => estudante.Nome == request.Nome, ct);
 
                 if (estudanteJaExistente)
                     return Results.Conflict(error: "Estudante já existe!");
 
                 var novoEstudante = new Estudante(request.Nome);
-                await context.Estudantes.AddAsync(novoEstudante);
-                await context.SaveChangesAsync();
+                await context.Estudantes.AddAsync(novoEstudante, ct);
+                await context.SaveChangesAsync(ct);
 
-                return Results.Ok(novoEstudante);
+                var estudanteRetorno = new EstudanteDTO(novoEstudante.Id, novoEstudante.Nome);
+
+                return Results.Ok(estudanteRetorno);
             });
 
-            rotasEstudantes.MapGet("", handler:async (AppDBContext context) => 
+            rotasEstudantes.MapGet("", handler:async (AppDBContext context, CancellationToken ct) => 
             {
                 var estudantes = await context.Estudantes
                 .Where(estudante => estudante.Ativo)
-                .ToListAsync();
+                .Select(estudante => new EstudanteDTO(estudante.Id, estudante.Nome))
+                .ToListAsync(ct);
                 return estudantes;
+            });
+
+            rotasEstudantes.MapPut("{id:guid}", async (
+                Guid id, UpdateEstudanteRequest request, AppDBContext context, CancellationToken ct) => 
+            {
+                var estudante = await context.Estudantes
+                    .SingleOrDefaultAsync(estudante => estudante.Id == id, ct);
+
+                if (estudante == null)
+                    return Results.NotFound();
+
+                estudante.AtualizarNome(request.Nome);
+
+                await context.SaveChangesAsync();
+                return Results.Ok(new EstudanteDTO(estudante.Id, estudante.Nome));
+            });
+
+            rotasEstudantes.MapDelete("{id}", async (Guid id, AppDBContext context, CancellationToken ct) =>
+            {
+                var estudante = await context.Estudantes
+                    .SingleOrDefaultAsync(estudante => estudante.Id == id, ct);
+
+                if (estudante == null)
+                    return Results.NotFound();
+
+                estudante.Desativar();
+
+                await context.SaveChangesAsync(ct);
+                return Results.Ok();
             });
         }
     }
